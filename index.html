@@ -358,7 +358,6 @@
           <div class="card" style="margin-bottom:1rem;">
             <div class="admin-section-title">출석 기록 기기 이동</div>
             <div class="data-actions">
-              <button class="btn-secondary" onclick="exportRecordsCsv()">CSV 내보내기</button>
               <label class="btn-secondary" style="cursor:pointer;display:inline-flex;align-items:center;">
                 CSV 가져오기
                 <input type="file" accept=".csv" style="display:none;" onchange="importRecordsCsv(this)" />
@@ -640,58 +639,81 @@
     setTimeout(() => { msg.textContent = ''; }, 2000);
   }
   /* ── 출석 기록 기기 이동 ── */
-  function exportRecordsCsv() {
-    const header = '날짜,시간,이름,상태,타임스탬프';
-    const rows = records.map(r => {
-      const d = new Date(r.ts);
-      const date = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      const time = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
-      const status = r.late ? '지각' : '정시';
-      return `${date},${time},${r.name},${status},${r.ts}`;
-    });
-    const csv = '﻿' + header + '\n' + rows.join('\n');
-    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `출석기록_${todayStr()}.csv`;
-    document.body.appendChild(a); a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 300);
-  }
   function importRecordsCsv(input) {
     const file = input.files[0];
     const msg = document.getElementById('record-import-msg');
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-      const text = e.target.result.replace(/^﻿/, ''); // BOM 제거
+    const parseAndImport = text => {
+      // BOM 제거(﻿) + \r 정규화
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+      text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       const lines = text.split('\n').map(l => l.trim()).filter(l => l);
       if (!lines.length) { msg.style.color='#D85A30'; msg.textContent='파일이 비어 있습니다.'; return; }
-      // 헤더 건너뜀
-      const dataLines = lines[0].startsWith('날짜') ? lines.slice(1) : lines;
+      // 헤더 감지: 첫 열이 YYYY-MM-DD 형태면 데이터, 아니면 헤더
+      const firstCol = lines[0].split(',')[0].trim().replace(/^[﻿​]+/, '');
+      const dataLines = /^\d{4}-\d{2}-\d{2}$/.test(firstCol) ? lines : lines.slice(1);
+      if (!dataLines.length) { msg.style.color='#D85A30'; msg.textContent='데이터가 없습니다.'; return; }
+      // 형식 자동 감지: 헤더 열 순서로 판단
+      // 형식A(기기이동): 날짜,시간,이름,상태,[타임스탬프]
+      // 형식B(통계내보내기): 날짜,이름,입실시간,지각여부
+      const headerLine = lines[0].toLowerCase();
+      const isFormatB = headerLine.includes('입실시간') || (
+        lines[0].split(',').length === 4 &&
+        !/^\d{4}-\d{2}-\d{2}$/.test(lines[0].split(',')[0].trim()) &&
+        /^\d{2}:\d{2}/.test((dataLines[0] || '').split(',')[2])
+      );
       const existing = new Set(records.map(r => r.ts + '|' + r.name));
-      let added = 0, errors = 0;
+      let added = 0, skipped = 0, errors = 0;
       dataLines.forEach(line => {
         const cols = line.split(',');
-        if (cols.length < 5) { errors++; return; }
-        const ts = parseInt(cols[4]);
-        const name = cols[2].trim();
-        const late = cols[3].trim() === '지각';
-        if (!ts || !name || isNaN(ts)) { errors++; return; }
-        const key = ts + '|' + name;
-        if (!existing.has(key)) {
-          records.push({ ts, name, late });
-          existing.add(key);
-          added++;
+        if (cols.length < 4) { errors++; return; }
+        let dateStr, timeStr, name, lateStr;
+        if (isFormatB) {
+          // 형식B: 날짜(0), 이름(1), 입실시간(2), 지각여부(3)
+          dateStr = cols[0].trim();
+          name    = cols[1].trim();
+          timeStr = cols[2].trim();
+          lateStr = cols[3].trim();
+        } else {
+          // 형식A: 날짜(0), 시간(1), 이름(2), 상태(3), [타임스탬프(4)]
+          dateStr = cols[0].trim();
+          timeStr = cols[1].trim();
+          name    = cols[2].trim();
+          lateStr = cols[3].trim();
         }
+        if (!dateStr || !name) { errors++; return; }
+        const late = lateStr === '지각';
+        // 타임스탬프: 형식A의 5번째 열 사용, 없으면 날짜+시간 파싱
+        let ts = NaN;
+        if (!isFormatB && cols.length >= 5) {
+          const raw = parseInt(cols[4].trim());
+          if (!isNaN(raw) && raw > 1000000000000) ts = raw;
+        }
+        if (isNaN(ts)) {
+          const dt = new Date(`${dateStr}T${timeStr || '00:00:00'}`);
+          ts = dt.getTime();
+        }
+        if (isNaN(ts) || ts <= 0) { errors++; return; }
+        const key = ts + '|' + name;
+        if (existing.has(key)) { skipped++; return; }
+        records.push({ ts, name, late, date: dateStr });
+        existing.add(key);
+        added++;
       });
       records.sort((a, b) => a.ts - b.ts);
       localStorage.setItem(KEY_RECORDS, JSON.stringify(records));
       renderDataTable();
       input.value = '';
-      msg.style.color='#27500A';
-      msg.textContent = `✓ ${added}건 추가됨 (총 ${records.length}건)${errors ? ` · ${errors}줄 오류` : ''}`;
-      setTimeout(() => { msg.textContent = ''; }, 4000);
+      const skipMsg = skipped ? ` · ${skipped}건 중복` : '';
+      const errMsg = errors ? ` · ${errors}줄 오류` : '';
+      msg.style.color = added > 0 ? '#27500A' : '#D85A30';
+      msg.textContent = added > 0
+        ? `✓ ${added}건 추가됨 (총 ${records.length}건)${skipMsg}${errMsg}`
+        : `가져온 데이터가 없습니다${errMsg}${skipMsg}`;
+      setTimeout(() => { msg.textContent = ''; msg.style.color='#27500A'; }, 5000);
     };
+    const reader = new FileReader();
+    reader.onload = e => parseAndImport(e.target.result);
     reader.readAsText(file, 'UTF-8');
   }
 
