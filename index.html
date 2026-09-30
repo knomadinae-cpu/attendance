@@ -162,6 +162,13 @@
     .admin-col-right input[type="text"],
     .admin-col-right input[type="password"],
     .admin-col-right input[type="time"] { height: 25px !important; }
+    /* 제작자 표시 — 화면 오른쪽 아래 고정 */
+    .maker-badge { position: fixed; right: 12px; bottom: 12px; z-index: 50; display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 8px; background: #fff; border: 0.5px solid var(--color-border); border-radius: var(--radius-md); font-size: 10px; color: #6b6b67; pointer-events: none; }
+    .maker-badge img { height: 22px; width: auto; display: block; }
+    /* 화면이 좁아 내용(가로 720px)과 겹칠 수 있으면 고정을 풀고 페이지 맨 아래 오른쪽에 둔다 */
+    @media (max-width: 940px) {
+      .maker-badge { position: static; width: fit-content; margin: 0 0 0 auto; }
+    }
   </style>
 </head>
 <body>
@@ -404,6 +411,8 @@
     </div>
   </div>
 </div>
+
+<div class="maker-badge"><span>Made by</span><img src="data:image/png;base64,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" alt="제작자" /></div>
 
 <script>
   const KEY_STUDENTS = 'att_students';
