@@ -140,13 +140,28 @@
     .sheet-cell { padding: 0; font-size: 13px !important; height: 25px !important; min-height: 0 !important; line-height: 25px; }
     .sheet-table tbody tr { height: 25px !important; max-height: 25px; }
     .sheet-table th { padding: 4px 8px; font-size: 11px; }
-    .csv-btn { font-size: 11px !important; padding: 0 6px !important; height: 26px !important; }
+    .csv-btn { font-size: 11px !important; padding: 0 6px !important; height: 25px !important; }
+    #clear-all-wrap .btn-danger { height: 25px; }
+    #student-content .unlock-bar .btn-secondary { height: 25px; }
     .sheet-del-yes { background:#993C1D; color:#fff; border:none; border-radius:3px; cursor:pointer; font-size:10px; font-family:var(--font); padding:0 4px; height:18px; }
     .sheet-del-no  { background:none; border:0.5px solid var(--color-border-md); border-radius:3px; cursor:pointer; font-size:10px; font-family:var(--font); padding:0 4px; height:18px; color:var(--color-text-secondary); }
     .time-setting-row { margin-bottom: 6px; gap: 8px; }
     .time-setting-row label { font-size: 13px; min-width: 72px; }
 
     @media (max-width: 480px) { body { padding: 1rem 0.75rem 3rem; } .time-display { font-size: 28px; } }
+
+    /* 출석 기록 내보내기 — 월 선택 라디오 */
+    .month-radios { display: flex; gap: 6px 14px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; color: var(--color-text-secondary); }
+    .month-radios label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+    .month-radios input { margin: 0; cursor: pointer; }
+
+    /* 오른쪽 창의 모든 버튼·입력칸 높이 = 학생명단 이름칸 높이(25px)
+       (인라인 style의 height도 덮어쓰도록 !important, <style> 맨 끝에 둘 것) */
+    .admin-col-right button,
+    .admin-col-right label.btn-secondary,
+    .admin-col-right input[type="text"],
+    .admin-col-right input[type="password"],
+    .admin-col-right input[type="time"] { height: 25px !important; }
   </style>
 </head>
 <body>
@@ -349,9 +364,11 @@
             <div class="data-actions">
               <button class="btn-secondary" onclick="exportData('day')">오늘</button>
               <button class="btn-secondary" onclick="exportData('week')">이번 주</button>
-              <button class="btn-secondary" onclick="exportData('month')">이번 달</button>
+              <button class="btn-secondary" onclick="exportData('month')">월</button>
               <button class="btn-secondary" onclick="exportData('all')">전체</button>
             </div>
+            <div id="export-month-radios" class="month-radios" style="display:none;"></div>
+            <div id="export-msg" style="margin-top:8px;font-size:13px;color:#27500A;"></div>
           </div>
 
           <!-- 출석 기록 기기 이동 -->
@@ -702,7 +719,7 @@
       });
       records.sort((a, b) => a.ts - b.ts);
       localStorage.setItem(KEY_RECORDS, JSON.stringify(records));
-      renderDataTable();
+      renderDataTable(); renderOldMonthBtns();
       input.value = '';
       const skipMsg = skipped ? ` · ${skipped}건 중복` : '';
       const errMsg = errors ? ` · ${errors}줄 오류` : '';
@@ -835,7 +852,7 @@
   }
 
   function tableHTML(rows) {
-    return `<table class="log-table"><thead><tr><th style="width:32px">#</th><th>이름</th><th>입실 시간</th><th style="width:72px">상태</th></tr></thead><tbody>`
+    return `<table class="log-table"><thead><tr><th style="width:48px">#</th><th>이름</th><th>입실 시간</th><th style="width:72px">상태</th></tr></thead><tbody>`
       +rows.map((r,i)=>`<tr><td class="rank">${i+1}</td><td>${r.name}</td><td style="font-variant-numeric:tabular-nums">${fmtTime(r.ts)}</td><td><span class="status-badge ${r.late?'badge-late':'badge-ontime'}">${r.late?'지각':'정시'}</span></td></tr>`).join('')
       +'</tbody></table>';
   }
@@ -902,7 +919,6 @@
     const max=Math.max(...sorted.map(s=>s.count),1);
     document.getElementById(elId).innerHTML=sorted.map(s=>`
       <div class="student-row">
-        <div class="avatar">${s.name.slice(0,1)}</div>
         <div style="flex:1;"><div class="student-name">${s.name}</div>
         <div class="stat-bar-bg"><div class="stat-bar-fill" style="width:${Math.round(s.count/max*100)}%"></div></div></div>
         <div style="font-size:12px;color:var(--color-text-secondary);text-align:right;">${s.count}회 지각</div>
@@ -952,13 +968,28 @@
   }
   function periodName(period) { return {day:'오늘',week:'이번 주',month:'이번 달',all:'전체'}[period]; }
 
-  function exportData(period) {
-    const filtered=records.filter(periodFilter(period));
-    if(!filtered.length){ showAdminMsg(`${periodName(period)} 출석 기록이 없습니다.`); return; }
+  function exportData(period, ym) {
+    let filter=periodFilter(period), label=periodLabel(period), name=periodName(period);
+    if(period==='month'){
+      const wrap=document.getElementById('export-month-radios');
+      if(!ym){
+        // "월" 클릭: 라디오 버튼 열기/닫기 (저장은 달을 누를 때)
+        if(!records.length){ wrap.style.display='none'; showExportMsg('출석 기록이 없습니다.'); return; }
+        renderOldMonthBtns();
+        wrap.style.display = wrap.style.display==='none' ? 'flex' : 'none';
+        return;
+      }
+      // 달 클릭: 그 달 저장 후 라디오 닫기
+      wrap.style.display='none';
+      const [y,m]=ym.split('-');
+      filter=r=>r.date.startsWith(ym); label=ym; name=`${y}년 ${parseInt(m)}월`;
+    }
+    const filtered=records.filter(filter);
+    if(!filtered.length){ showExportMsg(`${name} 출석 기록이 없습니다.`); return; }
     const header='날짜,이름,입실시간,지각여부\n';
     const rows=filtered.sort((a,b)=>a.ts-b.ts).map(r=>`${r.date},${r.name},${fmtTime(r.ts)},${r.late?'지각':'정시'}`).join('\n');
     const blob=new Blob(['﻿'+header+rows],{type:'text/csv'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`출석기록_${periodLabel(period)}.csv`;a.click();
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`출석기록_${label}.csv`;a.click();
   }
 
   let _clearPending = null;
@@ -1002,7 +1033,20 @@
     el.textContent=text; clearTimeout(el._t); el._t=setTimeout(()=>{el.textContent='';},3000);
   }
 
-  function renderOldMonthBtns() {}
+  function showExportMsg(text) {
+    const el=document.getElementById('export-msg'); if(!el) return;
+    el.textContent=text; clearTimeout(el._t); el._t=setTimeout(()=>{el.textContent='';},3000);
+  }
+  function renderOldMonthBtns() {
+    const wrap=document.getElementById('export-month-radios'); if(!wrap) return;
+    const months=[...new Set(records.map(r=>r.date.slice(0,7)))].sort().reverse();
+    if(!months.length){ wrap.innerHTML=''; wrap.style.display='none'; return; }
+    // 선택된 달 없이 표시 — 달을 누르는 즉시 그 달을 저장
+    wrap.innerHTML=months.map(ym=>{
+      const [y,m]=ym.split('-');
+      return `<label><input type="radio" name="export-month" value="${ym}" onclick="exportData('month','${ym}')">${y}년 ${parseInt(m)}월</label>`;
+    }).join('');
+  }
 
   setInterval(updateClock, 1000);
   updateClock();
