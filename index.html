@@ -480,9 +480,29 @@
     localStorage.setItem(KEY_STUDENTS, JSON.stringify(students));
     localStorage.setItem(KEY_RECORDS,  JSON.stringify(records));
   }
+  /* 기록 정리: 날짜 없는 기록은 입실 시각으로 날짜를 채우고,
+     같은 날짜·같은 학생·같은 초의 중복 기록은 하나만 남긴다 */
+  function recordKey(r) { return `${r.date}|${r.name}|${fmtTime(r.ts)}`; }
+  function repairRecords() {
+    if (!Array.isArray(records)) { records = []; return; }
+    const before = JSON.stringify(records);
+    const seen = new Set(), cleaned = [];
+    records.forEach(r => {
+      if (!r || !r.name || !r.ts) return;
+      if (!r.date) r.date = fmtDate(r.ts);
+      const k = recordKey(r);
+      if (seen.has(k)) return;
+      seen.add(k); cleaned.push(r);
+    });
+    cleaned.sort((a, b) => a.ts - b.ts);
+    records = cleaned;
+    if (JSON.stringify(records) !== before) localStorage.setItem(KEY_RECORDS, JSON.stringify(records));
+  }
+
   function load() {
     try { const s = localStorage.getItem(KEY_STUDENTS); students = s ? JSON.parse(s) : []; } catch { students = []; }
     try { const r = localStorage.getItem(KEY_RECORDS);  records  = r ? JSON.parse(r) : []; } catch { records = []; }
+    repairRecords();
     loadTimeSettings();
     renderWeeklySelect(); renderMonthlySelect();
     renderTodayLog(); renderToday(); renderWeekly(); renderMonthly();
@@ -679,7 +699,7 @@
         !/^\d{4}-\d{2}-\d{2}$/.test(lines[0].split(',')[0].trim()) &&
         /^\d{2}:\d{2}/.test((dataLines[0] || '').split(',')[2])
       );
-      const existing = new Set(records.map(r => r.ts + '|' + r.name));
+      const existing = new Set(records.map(recordKey));
       let added = 0, skipped = 0, errors = 0;
       dataLines.forEach(line => {
         const cols = line.split(',');
@@ -711,7 +731,7 @@
           ts = dt.getTime();
         }
         if (isNaN(ts) || ts <= 0) { errors++; return; }
-        const key = ts + '|' + name;
+        const key = recordKey({ ts, name, date: dateStr });
         if (existing.has(key)) { skipped++; return; }
         records.push({ ts, name, late, date: dateStr });
         existing.add(key);
